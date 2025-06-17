@@ -23,7 +23,7 @@ class DataManager:
     Manages data, metadata, clustering operations, and color management for the visualization application.
     """
     
-    def __init__(self, embeddings: np.ndarray, metadata: pd.DataFrame, umap_hbdscan_clustering: bool = True, auto_cluster: bool = True, primary_metadata_column = None):
+    def __init__(self, embeddings: np.ndarray, metadata: pd.DataFrame, umap_hbdscan_clustering: bool = True, primary_metadata_column = None):
         """
         Initialize the DataManager with embeddings and metadata.
         
@@ -37,12 +37,13 @@ class DataManager:
         self.n_neighbors = 15
         self.min_dist = 0.1
         self.umap_data = None
+        self.umap = None
         self.primary_metadata_column = primary_metadata_column
         
         if umap_hbdscan_clustering:
             print("Performing UMAP dimensionality reduction...")
-            reducer = umap.UMAP(n_components=2, n_neighbors=self.n_neighbors, min_dist=self.min_dist, unique=True)
-            self.umap_data = reducer.fit_transform(embeddings)
+            self.umap = umap.UMAP(n_components=2, n_neighbors=self.n_neighbors, min_dist=self.min_dist, unique=True)
+            self.umap_data = self.umap.fit_transform(embeddings)
 
         self.pca = PCA()
         self.pca_data = self.pca.fit_transform(self.X)
@@ -80,7 +81,7 @@ class DataManager:
         self.original_labels = self.labels.copy()
         self.n_clusters = len(np.unique(self.labels))
 
-        if auto_cluster:
+        if umap_hbdscan_clustering:
             self._perform_initial_clustering()
         
         # Initialize colors for clusters

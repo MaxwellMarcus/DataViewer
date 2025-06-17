@@ -1635,14 +1635,21 @@ class UMAPTab(ScatterTab):
     def __init__(self, name, data_manager, umap_data=None):
         self.n_neighbors = 15
         self.min_dist = 0.1
+
+        print( "UMAPTab init" )
         
         super().__init__(name, data_manager)
 
-        if umap_data is None:
-            reducer = umap.UMAP(n_components=2, n_neighbors=self.n_neighbors, min_dist=self.min_dist, unique=True)
-            umap_data = reducer.fit_transform(data_manager.X)
+        print( "UMAPTab init 2" )
 
-        self.X = umap_data
+        if umap_data is None:
+            self.umap = umap.UMAP(n_components=2, n_neighbors=self.n_neighbors, min_dist=self.min_dist, unique=True)
+            self.X = self.umap.fit_transform(data_manager.X)
+        else:
+            print( "UMAPTab init 3" )
+            self.X = umap_data
+        print( "UMAPTab init 4" )
+
     def setup_axis_controls(self):
         """UMAP specific axis controls"""
 
