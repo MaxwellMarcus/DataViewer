@@ -1,0 +1,5 @@
+encode.py
+*.npy
+__pycache__
+*.txt
+*.csv
