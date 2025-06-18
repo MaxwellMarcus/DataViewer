@@ -12,7 +12,7 @@ import hdbscan
 import pandas as pd
 from data_manager import DataManager
 from tab_manager import TabManager
-from file_selector import FileSelector
+from enhanced_file_selector import EnhancedFileSelector
 import umap
 from scatter_tabs import *
 
@@ -46,17 +46,17 @@ class VisualizerDPG:
         self.start_main_application()
 
     def show_file_selector(self):
-        """Show file selector and return True if files were selected"""
+        """Show enhanced file selector and return True if files were selected"""
         dpg.create_context()
         
-        file_selector = FileSelector(callback=self.on_files_selected)
+        file_selector = EnhancedFileSelector(callback=self.on_files_selected)
         file_selector.show_file_selector()
         
         # Create viewport and start DearPyGui with just file selector
-        dpg.create_viewport(title="Data Visualization - File Selection", width=700, height=600)
+        dpg.create_viewport(title="Data Visualization Setup", width=1000, height=800)
         dpg.setup_dearpygui()
         dpg.show_viewport()
-        dpg.set_primary_window("file_selector_window", True)
+        dpg.set_primary_window("enhanced_file_selector", True)
         dpg.start_dearpygui()
         dpg.destroy_context()
         
@@ -82,10 +82,52 @@ class VisualizerDPG:
         # Create new context for main application
         dpg.create_context()
         
-        # Initialize DataManager with selected data
+        # Load the actual data from file paths
+        try:
+            # Load embeddings data
+            if self.selected_embeddings.endswith('.npy'):
+                embeddings_data = np.load(self.selected_embeddings)
+                print(f"Loaded embeddings from {self.selected_embeddings}: shape {embeddings_data.shape}")
+            else:
+                raise ValueError(f"Unsupported embeddings file format: {self.selected_embeddings}")
+            
+            # Load metadata
+            if self.selected_metadata.endswith('.csv'):
+                metadata_data = pd.read_csv(self.selected_metadata)
+            elif self.selected_metadata.endswith('.json'):
+                metadata_data = pd.read_json(self.selected_metadata)
+            elif self.selected_metadata.endswith('.parquet'):
+                metadata_data = pd.read_parquet(self.selected_metadata)
+            elif self.selected_metadata.endswith(('.xlsx', '.xls')):
+                metadata_data = pd.read_excel(self.selected_metadata)
+            else:
+                raise ValueError(f"Unsupported metadata file format: {self.selected_metadata}")
+            
+            print(f"Loaded metadata from {self.selected_metadata}: shape {metadata_data.shape}")
+            print(f"Metadata columns: {list(metadata_data.columns)}")
+            
+            # Validate data consistency
+            if len(embeddings_data) != len(metadata_data):
+                raise ValueError(f"Data mismatch: {len(embeddings_data)} embeddings vs {len(metadata_data)} metadata rows")
+            
+        except Exception as e:
+            print(f"Error loading data: {e}")
+            # Create error dialog
+            with dpg.window(label="Error Loading Data", modal=True, width=400, height=200):
+                dpg.add_text(f"Failed to load data files:")
+                dpg.add_text(f"Error: {str(e)}")
+                dpg.add_separator()
+                dpg.add_button(label="OK", callback=lambda: dpg.stop_dearpygui())
+            dpg.setup_dearpygui()
+            dpg.show_viewport()
+            dpg.start_dearpygui()
+            dpg.destroy_context()
+            return
+        
+        # Initialize DataManager with actual loaded data
         self.data_manager = DataManager(
-            self.selected_embeddings, 
-            self.selected_metadata, 
+            embeddings_data, 
+            metadata_data, 
             primary_metadata_column=self.selected_primary_column
         )
         
@@ -131,7 +173,6 @@ class VisualizerDPG:
         dpg.create_viewport(title="Data Visualization Tool", width=1200, height=800)
         dpg.setup_dearpygui()
         dpg.show_viewport()
-        dpg.set_primary_window("main_window", True)
         
         print("Application loaded successfully!")
         print("Lasso functionality available:")
