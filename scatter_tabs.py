@@ -136,24 +136,27 @@ class ScatterTab:
          # Create horizontal layout with controls on left, plot in center, legend on right
         with dpg.group(horizontal=True, tag=f"{self.name}_content"):
             # Left side - axis controls (will be overridden by subclasses)
-            with dpg.child_window(width=300, height=-1, border=True, tag=f"{self.name}_controls"):
+            with dpg.child_window(width=300, height=-1, border=True, tag=f"{self.name}_controls", horizontal_scrollbar=False):
     
                 # Text box for displaying hovered point data
                 dpg.add_input_text(
                     label="",
-                    default_value="Hover over a point to see its information...",
+                    default_value="Hover over a point to see its information or click to select it...",
                     multiline=True,
                     readonly=True,
-                    height=150,
+                    height=200,
                     width=280,
                     tag=f"{self.name}_point_info_text"
                 )
                 dpg.add_separator()
-                with dpg.plot(width=-20, no_title=True, no_menus=True, no_box_select=True, no_mouse_pos=True, crosshairs=False, equal_aspects=True, no_inputs=True, no_frame=True ):
-                    dpg.add_plot_axis( dpg.mvXAxis, no_label=True, tag=f"{self.name}_hover_axis_x" )
-                    with dpg.plot_axis( dpg.mvYAxis, no_label=True, tag=f"{self.name}_hover_axis" ):
+                dpg.add_separator()
+                dpg.add_text( "Principal Components Explaining 75 Percent of Variance", color=[200, 200, 200], wrap=280 )
+                dpg.add_separator()
+                with dpg.plot( no_title=True, no_menus=True, no_box_select=True, no_mouse_pos=True, crosshairs=False, equal_aspects=False, no_inputs=True, no_frame=True, width=280, height=280 ):
+                    dpg.add_plot_axis( dpg.mvXAxis, no_label=True, no_gridlines=True, no_tick_marks=True, no_tick_labels=True, no_menus=True, no_side_switch=True, no_highlight=True, tag=f"{self.name}_hover_axis_x" )
+                    with dpg.plot_axis( dpg.mvYAxis, no_label=True, no_gridlines=True, no_tick_marks=True, no_tick_labels=True, no_menus=True, no_side_switch=True, no_highlight=True, tag=f"{self.name}_hover_axis" ):
                         # dpg.add_line_series( [ 0, 100, 100, 0 ], [ 0, 0, 100, 100], color=[255, 0, 255, 50], tag=f"{self.name}_hover_lines", loop=True )
-                        dpg.add_area_series( [ 0, 100, 100, 0 ], [ 0, 0, 100, 100 ], tag=f"{self.name}_hover_area" )
+                        dpg.add_area_series( [ 0, 0 ], [ 0, 0 ], tag=f"{self.name}_hover_area" )
                         # Apply theme to the initial hover area
                         dpg.bind_item_theme(f"{self.name}_hover_area", self.hover_area_theme)
 
@@ -183,7 +186,8 @@ class ScatterTab:
 
             # Center - the plot
             with dpg.child_window(width=-200, height=-1, border=False):
-                with dpg.plot(label=self.name, width=-1, height=-1, tag=f"{self.name}_plot"):
+                with dpg.plot(label=self.name, width=-1, height=-1, tag=f"{self.name}_plot", 
+                             no_box_select=True, no_menus=True):  # Disable right-click box select
                     # Configure plot (no legend)
                     dpg.add_plot_axis(dpg.mvXAxis, label=f"{self.name} Component 1", tag=f"{self.name}_x_axis")
                     dpg.add_plot_axis(dpg.mvYAxis, label=f"{self.name} Component 2", tag=f"{self.name}_y_axis")
@@ -207,6 +211,7 @@ class ScatterTab:
             dpg.add_mouse_click_handler(callback=self.mouse_down_callback, button=dpg.mvMouseButton_Left)
             dpg.add_mouse_release_handler(callback=self.mouse_up_callback, button=dpg.mvMouseButton_Left)
             dpg.add_mouse_drag_handler(callback=self.mouse_drag_callback, button=dpg.mvMouseButton_Left)
+            dpg.add_mouse_click_handler(callback=self.right_click_callback, button=dpg.mvMouseButton_Right)
             dpg.add_key_press_handler(callback=self.key_press_callback)
             dpg.add_key_release_handler(callback=self.key_release_callback)
 
@@ -229,10 +234,10 @@ class ScatterTab:
             else:
                 dpg.configure_item(plot_tag, 
                     pan_button=dpg.mvMouseButton_Left,  # Restore normal pan
-                    box_select_button=dpg.mvMouseButton_Right  # Restore box select
+                    box_select_button=-1  # Keep box select disabled (right-click now resets selections)
                 )
                 dpg.delete_item(f"{self.name}_lasso_annotation")
-                print(f"[DEBUG] Plot pan behavior updated for {self.name}: pan_button=Left, box_select=Right")
+                print(f"[DEBUG] Plot pan behavior updated for {self.name}: pan_button=Left, box_select remains disabled")
 
     def key_press_callback(self, sender, app_data):
         """Handle key press events"""
@@ -418,7 +423,7 @@ class ScatterTab:
                 dy = self.mouse_down_pos[1] - abs_pos[1]
                 dist = (dx**2 + dy**2)**0.5
                 print(f"[DEBUG] Regular click distance: {dist:.2f}")
-                if dist < 3.0:
+                if dist == 0: # distance is relative to the size of the data, so anthing other than 0 is meaningless. Do not change.
                     # Treat as click
                     if plot_pos:
                         x_mouse, y_mouse = plot_pos
@@ -426,16 +431,26 @@ class ScatterTab:
                         if closest_point_info:
                             point_idx, cluster, distance, x_coord, y_coord = closest_point_info
                             print(f"[DEBUG] Found closest point {point_idx} at distance {distance:.2f}")
-                            if distance < 3.0:
-                                self.select_point(point_idx)
-                                self.lasso_selection = np.array([], dtype=np.int32)
-                            else:
-                                self.clear_point_selection()
-                else:
-                    self.clear_point_selection()
+                            self.select_point(point_idx)
+                            self.lasso_selection = np.array([], dtype=np.int32)
             self.mouse_down_pos = None
         else:
             self.mouse_down_pos = None
+
+    def right_click_callback(self, sender, app_data):
+        """Handle right-click to reset all selections"""
+        plot_tag = f"{self.name}_plot"
+        if dpg.does_item_exist(plot_tag) and dpg.is_item_hovered(plot_tag):
+            print(f"[DEBUG] Right-click detected on {self.name} - resetting selections")
+            
+            # Clear both lasso and point selections
+            self.clear_lasso_selection()
+            self.clear_point_selection()
+            
+            # Refresh the plot to show changes
+            self.refresh_plot_visibility()
+            
+            print(f"[DEBUG] Cleared all selections on {self.name}")
 
     def complete_lasso_selection(self):
         """Complete polygon lasso selection"""
@@ -553,6 +568,12 @@ class ScatterTab:
             self.selected_points.remove(point_idx)
             # Clear selection in data manager
             self.data_manager.selected_point_index = None
+            # If no points selected, revert to hover mode
+            if len(self.selected_points) == 0:
+                self.hide_hover_annotation()
+            else:
+                # Show info for the remaining selected point
+                self.show_selected_point_info(self.selected_points[-1])
         else:
             # Add to selection (max 2 points)
             if len(self.selected_points) < 2:
@@ -562,12 +583,99 @@ class ScatterTab:
                 old_point = self.selected_points.pop(0)
                 self.selected_points.append(point_idx)
             
+            # Show info for the newly selected point
+            self.show_selected_point_info(point_idx)
+            
             # Notify data manager of single point selection
             self.data_manager.handle_single_point_selection(point_idx)
         
         self.update_selection_display()
         self.refresh_plot_visibility()
-    
+
+    def show_selected_point_info(self, point_idx):
+        """Display information for the selected point in the info text box"""
+        if point_idx >= len(self.X) or point_idx < 0:
+            return
+            
+        # Get point information
+        x_coord, y_coord = self.X[point_idx]
+        cluster = self.data_manager.labels[point_idx] if self.data_manager.labels is not None else 0
+        
+        # Create detailed information text
+        cluster_colors = ["Red", "Blue", "Green", "Other"]
+        cluster_name = cluster_colors[cluster] if cluster < len(cluster_colors) else f"Cluster {cluster}"
+        
+        # Format the information display - mark as selected
+        info_text = f"SELECTED POINT\n"
+        info_text += f"{'=' * 20}\n"
+        info_text += f"Point Index: {point_idx}\n"
+        info_text += f"Cluster: {cluster_name}\n"
+        info_text += f"Coordinates: ({x_coord:.3f}, {y_coord:.3f})\n\n"
+        
+        # Add all metadata including caption
+        if point_idx < len(self.data_manager.metadata):
+            info_text += "Metadata:\n"
+            info_text += f"{'-' * 15}\n"
+            for col in self.data_manager.metadata.columns:
+                value = self.data_manager.metadata.iloc[point_idx][col]
+                # Wrap long text values
+                if isinstance(value, str) and len(value) > 40:
+                    words = value.split()
+                    lines = []
+                    current_line = []
+                    line_length = 0
+                    
+                    for word in words:
+                        if line_length + len(word) + 1 <= 40:  # +1 for space
+                            current_line.append(word)
+                            line_length += len(word) + 1
+                        else:
+                            lines.append(" ".join(current_line))
+                            current_line = [word]
+                            line_length = len(word)
+                            
+                    if current_line:
+                        lines.append(" ".join(current_line))
+                    value = "\n    " + "\n    ".join(lines)
+                info_text += f"{col}: {value}\n"
+
+        # Update the visualization plots
+        offset = 1
+        points = self.data_manager.pca_variance_75
+        datapoint = self.data_manager.pca_data[point_idx][ :points ]
+        xpoints = []
+        ypoints = []
+        for i in range(len(datapoint)):
+            theta = i * 2 * np.pi / len( datapoint )
+            length = datapoint[i] + offset
+            xpoints.append( length * np.cos(theta) )
+            ypoints.append( length * np.sin(theta) )
+
+        if dpg.does_item_exist(f"{self.name}_hover_area"):
+            dpg.delete_item(f"{self.name}_hover_area")
+
+        dpg.add_area_series( xpoints, ypoints, tag=f"{self.name}_hover_area", parent=f"{self.name}_hover_axis", fill=[255, 255, 0, 200] )
+        dpg.bind_item_theme(f"{self.name}_hover_area", self.hover_area_theme)
+
+        cluster_mean = self.data_manager.pca_data[self.data_manager.labels == cluster].mean(axis=0)[ :points ]
+        for i in range(len(datapoint)):
+            theta = i * 2 * np.pi / len( datapoint )
+            length = cluster_mean[i] + offset
+            xpoints.append( length * np.cos(theta) )
+            ypoints.append( length * np.sin(theta) )
+
+        if dpg.does_item_exist(f"{self.name}_hover_area_mean"):
+            dpg.delete_item(f"{self.name}_hover_area_mean")
+        dpg.add_area_series( xpoints, ypoints, tag=f"{self.name}_hover_area_mean", parent=f"{self.name}_hover_axis", fill=[0, 255, 150, 200] )
+
+        dpg.fit_axis_data(f"{self.name}_hover_axis")
+        dpg.fit_axis_data(f"{self.name}_hover_axis_x")
+                
+        # Update the text box in the left panel
+        text_tag = f"{self.name}_point_info_text"
+        if dpg.does_item_exist(text_tag):
+            dpg.set_value(text_tag, info_text)
+
     def add_point_highlight(self, point_idx):
         """Add a highlight to a selected point"""
         try:
@@ -621,6 +729,8 @@ class ScatterTab:
     def clear_point_selection(self, sender=None, app_data=None):
         """Clear all selected points"""
         self.selected_points.clear()
+        # Clear the information display and revert to hover mode
+        self.hide_hover_annotation()
         self.update_selection_display()
         self.refresh_plot_visibility()
     
@@ -688,6 +798,10 @@ class ScatterTab:
     def update_hover_annotation(self):
         """Update hover annotation that appears next to datapoints"""
         try:
+            # Don't show hover information if a point is selected
+            if len(self.selected_points) > 0:
+                return
+                
             current_time = time.time()
             
             # Debounce rapid calls
@@ -786,11 +900,14 @@ class ScatterTab:
         print( self.data_manager.pca.explained_variance_ratio_[ :points ].sum(), self.data_manager.pca_variance_75 )
         xpoints = []
         ypoints = []
+
+        max_value = 0
         for i in range(len(datapoint)):
             theta = i * 2 * np.pi / len( datapoint )
             length = datapoint[i] + offset
             xpoints.append( length * np.cos(theta) )
             ypoints.append( length * np.sin(theta) )
+            max_value = max( max_value, abs( length * np.cos( theta ) ), abs( length * np.sin( theta ) ) )
 
         if dpg.does_item_exist(f"{self.name}_hover_area"):
             dpg.delete_item(f"{self.name}_hover_area")
@@ -804,14 +921,15 @@ class ScatterTab:
             length = cluster_mean[i] + offset
             xpoints.append( length * np.cos(theta) )
             ypoints.append( length * np.sin(theta) )
+            max_value = max( max_value, abs( length * np.cos( theta ) ), abs( length * np.sin( theta ) ) )
 
         if dpg.does_item_exist(f"{self.name}_hover_area_mean"):
             dpg.delete_item(f"{self.name}_hover_area_mean")
         dpg.add_area_series( xpoints, ypoints, tag=f"{self.name}_hover_area_mean", parent=f"{self.name}_hover_axis", fill=[0, 255, 150, 200] )
         # dpg.bind_item_theme(f"{self.name}_hover_area_mean", self.hover_area_mean_theme)
-
-        dpg.fit_axis_data(f"{self.name}_hover_axis")
-        dpg.fit_axis_data(f"{self.name}_hover_axis_x")
+        
+        dpg.set_axis_limits(f"{self.name}_hover_axis_x", -max_value * 1.1, max_value * 1.1)
+        dpg.set_axis_limits(f"{self.name}_hover_axis", -max_value * 1.1, max_value * 1.1)
                 
         # Update the text box in the left panel
         text_tag = f"{self.name}_point_info_text"
@@ -822,7 +940,12 @@ class ScatterTab:
         """Clear the point information text box"""
         text_tag = f"{self.name}_point_info_text"
         if dpg.does_item_exist(text_tag):
-            dpg.set_value(text_tag, "Hover over a point to see its information...")
+            if len(self.selected_points) > 0:
+                # If points are selected, indicate that
+                dpg.set_value(text_tag, "Click on a point to select it and view its information.\n\nCurrently selected points are shown above.")
+            else:
+                # Default hover message
+                dpg.set_value(text_tag, "Hover over a point to see its information or click to select it...")
     
     def setup_custom_legend(self):
         """Setup custom legend with visibility controls"""
@@ -901,8 +1024,12 @@ class ScatterTab:
         # Add instructions and controls at the bottom
         dpg.add_text("CONTROLS", color=[255, 255, 100])
         dpg.add_separator()
+        dpg.add_text("Legend:", color=[255, 255, 100])
         dpg.add_text("• Left click: Hide/Show", color=[200, 200, 200], wrap=160)
         dpg.add_text("• Right click: Focus", color=[200, 200, 200], wrap=160)
+        dpg.add_separator()
+        dpg.add_text("Plot:", color=[255, 255, 100])
+        dpg.add_text("• Right click: Reset selections", color=[200, 200, 200], wrap=160)
         dpg.add_separator()
         dpg.add_button(
             label="Show All",
@@ -1186,17 +1313,30 @@ class ScatterTab:
             print(f"Even simple legend setup failed for {self.name}: {e}")
 
     def find_closest_point(self, x_mouse, y_mouse, data, labels):
-        """Find the closest data point to mouse coordinates"""
+        """Find the closest data point to mouse coordinates, only considering points shown in full color"""
         if len(data) == 0:
             return None
         
-        # Calculate distances from mouse position to all points
-        mouse_pos = np.array([x_mouse, y_mouse])
-        distances = np.sqrt(np.sum((data - mouse_pos) ** 2, axis=1))
+        # Create mask for points that should be considered (shown in full color)
+        valid_indices = self._get_full_color_point_indices()
         
-        # Find the closest point
-        closest_idx = np.argmin(distances)
-        closest_distance = distances[closest_idx]
+        if len(valid_indices) == 0:
+            return None
+        
+        # Filter data and labels to only consider valid points
+        valid_data = data[valid_indices]
+        valid_labels = labels[valid_indices] if labels is not None else np.zeros(len(valid_indices))
+        
+        # Calculate distances from mouse position to valid points only
+        mouse_pos = np.array([x_mouse, y_mouse])
+        distances = np.sum((valid_data - mouse_pos) ** 2, axis=1)
+        
+        # Find the closest point among valid points
+        closest_valid_idx = np.argmin(distances)
+        closest_distance = distances[closest_valid_idx]
+        
+        # Map back to original index
+        closest_idx = valid_indices[closest_valid_idx]
         
         # Get cluster for this point
         cluster = labels[closest_idx] if labels is not None else 0
@@ -1205,6 +1345,29 @@ class ScatterTab:
         x_coord, y_coord = data[closest_idx]
         
         return closest_idx, cluster, closest_distance, x_coord, y_coord
+    
+    def _get_full_color_point_indices(self):
+        """Get indices of points that are currently shown in full color (not dimmed or hidden)"""
+        all_indices = np.arange(len(self.data_manager.labels))
+        valid_indices = []
+        
+        # Check if we have active selections
+        has_point_selections = len(self.selected_points) > 0
+        has_lasso_selections = len(self.lasso_selection) > 0
+
+        mask = np.ones( len( self.data_manager.labels ), dtype=bool )
+        if has_point_selections:
+            mask[ self.selected_points ] = True
+        if has_lasso_selections:
+            mask[ self.lasso_selection ] = True
+
+        for cluster_id in np.unique( self.data_manager.labels ):
+            if not self.is_cluster_visible( cluster_id ):
+                mask[ self.data_manager.labels == cluster_id ] = False
+
+        valid_indices = all_indices[ mask ]
+
+        return valid_indices
 
     def add_scatter_data(self, clusters):
         """Add scatter plot data for each cluster"""

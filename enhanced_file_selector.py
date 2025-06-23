@@ -51,48 +51,29 @@ class EnhancedFileSelector:
             width=800,
             height=700,
             no_resize=True,
-            modal=True
+            modal=False
         ):
             # Title
             dpg.add_text("Data Visualization Setup", color=[70, 130, 180])
             dpg.add_separator()
             dpg.add_spacer(height=10)
             
-            # Mode selection
-            dpg.add_text("Choose setup method:")
-            dpg.add_radio_button(
-                items=["Load Existing Files", "Process Dataset with AI"],
-                default_value=0,
-                callback=self.on_mode_changed,
-                horizontal=False,
-                tag="mode_selector"
-            )
-            
-            dpg.add_separator()
-            dpg.add_spacer(height=20)
-            
-            # Content area
-            with dpg.child_window(height=450, tag="content_area"):
-                self.create_file_mode_ui()
+            # Tab system for mode selection
+            with dpg.tab_bar(tag="mode_tab_bar", callback=self.on_tab_changed):
+                with dpg.tab(label="Load Existing Files", tag="file_mode_tab"):
+                    with dpg.child_window(height=-10):
+                        self.create_file_mode_ui()
+                
+                with dpg.tab(label="Process Dataset with AI", tag="dataset_mode_tab"):
+                    with dpg.child_window(height=-10):
+                        self.create_dataset_mode_ui()
     
-    def on_mode_changed(self, sender, app_data):
-        """Handle mode change"""
-        self.mode = "file_selection" if app_data == 0 else "dataset_processing"
-        
-        # Clear content and rebuild with proper parent context
-        dpg.delete_item("content_area", children_only=True)
-        
-        # Push the content_area as parent context before adding items
-        dpg.push_container_stack("content_area")
-        
-        try:
-            if self.mode == "file_selection":
-                self.create_file_mode_ui()
-            else:
-                self.create_dataset_mode_ui()
-        finally:
-            # Always pop the container stack
-            dpg.pop_container_stack()
+    def on_tab_changed(self, sender, app_data):
+        """Handle tab change"""
+        if app_data == "file_mode_tab":
+            self.mode = "file_selection"
+        elif app_data == "dataset_mode_tab":
+            self.mode = "dataset_processing"
     
     def create_file_mode_ui(self):
         """Create file selection UI"""
@@ -588,133 +569,137 @@ class EnhancedFileSelector:
         if dpg.does_item_exist("progress_bar"):
             dpg.configure_item("progress_bar", show=True)
             dpg.set_value("progress_bar", 0.0)
+
+        threading.Thread(target=self.process, daemon=True).start()
         
-        def process():
-            try:
-                # Load dataset
-                if dpg.does_item_exist("processing_status"):
-                    dpg.set_value("processing_status", "Loading dataset...")
+    def process(self):
+        try:
+            # Load dataset
+            if dpg.does_item_exist("processing_status"):
+                dpg.set_value("processing_status", "Loading dataset...")
+            if dpg.does_item_exist("progress_bar"):
+                dpg.set_value("progress_bar", 0.1)
+            
+            df = load_dataset_smart(self.source_type, self.source_path)
+            
+            # Sample data
+            max_samples = dpg.get_value("max_samples") if dpg.does_item_exist("max_samples") else 1000
+            if len(df) > max_samples:
+                df = df.sample(n=max_samples, random_state=42)
+            
+            # Filter columns early to save memory
+            all_needed_columns = list(set(self.selected_columns + [text_column]))
+            df = df[all_needed_columns]
+            
+            # Preprocess
+            if dpg.does_item_exist("processing_status"):
+                dpg.set_value("processing_status", "Preprocessing text...")
+            if dpg.does_item_exist("progress_bar"):
+                dpg.set_value("progress_bar", 0.2)
+            
+            steps = [{"name": "take_column", "params": {"column_name": text_column}}]
+            
+            clean_text_val = dpg.get_value("clean_text") if dpg.does_item_exist("clean_text") else True
+            truncate_val = dpg.get_value("truncate_text") if dpg.does_item_exist("truncate_text") else True
+            
+            if clean_text_val:
+                steps.append({"name": "clean_text", "params": {}})
+            
+            if truncate_val:
+                steps.append({"name": "truncate_text", "params": {"max_length": 512}})
+            
+            processed_df, final_column = apply_preprocessing(df, steps)
+            texts = processed_df[final_column].tolist()
+            
+            # Generate embeddings with batch processing
+            batch_size = dpg.get_value("batch_size") if dpg.does_item_exist("batch_size") else self.batch_size
+            total_texts = len(texts)
+            all_embeddings = []
+            
+            if dpg.does_item_exist("processing_status"):
+                dpg.set_value("processing_status", f"Generating embeddings (batch size: {batch_size})...")
+            
+            for i in range(0, total_texts, batch_size):
+                batch_texts = texts[i:i + batch_size]
+                batch_progress = 0.3 + (i / total_texts) * 0.4  # Progress from 30% to 70%
+                
                 if dpg.does_item_exist("progress_bar"):
-                    dpg.set_value("progress_bar", 0.1)
-                
-                df = load_dataset_smart(self.source_type, self.source_path)
-                
-                # Sample data
-                max_samples = dpg.get_value("max_samples") if dpg.does_item_exist("max_samples") else 1000
-                if len(df) > max_samples:
-                    df = df.sample(n=max_samples, random_state=42)
-                
-                # Filter columns early to save memory
-                all_needed_columns = list(set(self.selected_columns + [text_column]))
-                df = df[all_needed_columns]
-                
-                # Preprocess
+                    dpg.set_value("progress_bar", batch_progress)
                 if dpg.does_item_exist("processing_status"):
-                    dpg.set_value("processing_status", "Preprocessing text...")
-                if dpg.does_item_exist("progress_bar"):
-                    dpg.set_value("progress_bar", 0.2)
+                    dpg.set_value("processing_status", f"Processing batch {i//batch_size + 1}/{(total_texts + batch_size - 1)//batch_size}...")
                 
-                steps = [{"name": "take_column", "params": {"column_name": text_column}}]
-                
-                clean_text_val = dpg.get_value("clean_text") if dpg.does_item_exist("clean_text") else True
-                truncate_val = dpg.get_value("truncate_text") if dpg.does_item_exist("truncate_text") else True
-                
-                if clean_text_val:
-                    steps.append({"name": "clean_text", "params": {}})
-                
-                if truncate_val:
-                    steps.append({"name": "truncate_text", "params": {"max_length": 512}})
-                
-                processed_df, final_column = apply_preprocessing(df, steps)
-                texts = processed_df[final_column].tolist()
-                
-                # Generate embeddings with batch processing
-                batch_size = dpg.get_value("batch_size") if dpg.does_item_exist("batch_size") else self.batch_size
-                total_texts = len(texts)
-                all_embeddings = []
-                
-                if dpg.does_item_exist("processing_status"):
-                    dpg.set_value("processing_status", f"Generating embeddings (batch size: {batch_size})...")
-                
-                for i in range(0, total_texts, batch_size):
-                    batch_texts = texts[i:i + batch_size]
-                    batch_progress = 0.3 + (i / total_texts) * 0.4  # Progress from 30% to 70%
+                try:
+                    # Determine model to use
+                    model_type = self.selected_model_type
+                    if self.use_custom_model and self.custom_model_repo:
+                        model_name = self.custom_model_repo
+                    else:
+                        model_name = self.selected_model_name
                     
-                    if dpg.does_item_exist("progress_bar"):
-                        dpg.set_value("progress_bar", batch_progress)
+                    # Set HF token if available
+                    if self.hf_token:
+                        os.environ["HUGGINGFACE_HUB_TOKEN"] = self.hf_token
+                    
+                    batch_embeddings = run_model(model_type, model_name, batch_texts)
+                    if batch_embeddings is not None:
+                        all_embeddings.append(batch_embeddings)
+                    else:
+                        raise Exception(f"Model failed on batch {i//batch_size + 1}")
+                except Exception as e:
                     if dpg.does_item_exist("processing_status"):
-                        dpg.set_value("processing_status", f"Processing batch {i//batch_size + 1}/{(total_texts + batch_size - 1)//batch_size}...")
-                    
-                    try:
-                        # Determine model to use
-                        model_type = self.selected_model_type
-                        if self.use_custom_model and self.custom_model_repo:
-                            model_name = self.custom_model_repo
-                        else:
-                            model_name = self.selected_model_name
-                        
-                        # Set HF token if available
-                        if self.hf_token:
-                            os.environ["HUGGINGFACE_HUB_TOKEN"] = self.hf_token
-                        
-                        batch_embeddings = run_model(model_type, model_name, batch_texts)
-                        if batch_embeddings is not None:
-                            all_embeddings.append(batch_embeddings)
-                        else:
-                            raise Exception(f"Model failed on batch {i//batch_size + 1}")
-                    except Exception as e:
-                        if dpg.does_item_exist("processing_status"):
-                            dpg.set_value("processing_status", f"Error in batch {i//batch_size + 1}: {str(e)}")
-                        return
-                
-                # Combine all embeddings
-                if dpg.does_item_exist("processing_status"):
-                    dpg.set_value("processing_status", "Combining embeddings...")
-                if dpg.does_item_exist("progress_bar"):
-                    dpg.set_value("progress_bar", 0.8)
-                
-                embeddings = np.vstack(all_embeddings)
-                
-                # Save files with only selected columns
-                if dpg.does_item_exist("processing_status"):
-                    dpg.set_value("processing_status", "Saving files...")
-                if dpg.does_item_exist("progress_bar"):
-                    dpg.set_value("progress_bar", 0.9)
-                
-                np.save("generated_embeddings.npy", embeddings)
-                
-                # Create metadata with only selected columns plus processed text
-                metadata_df = df[self.selected_columns].copy()
-                metadata_df['processed_text'] = texts
-                metadata_df.to_csv("generated_metadata.csv", index=False)
-                
-                if dpg.does_item_exist("progress_bar"):
-                    dpg.set_value("progress_bar", 1.0)
-                if dpg.does_item_exist("processing_status"):
-                    dpg.set_value("processing_status", f"Complete! Generated {len(embeddings)} embeddings with {len(metadata_df.columns)} metadata columns.")
-                
-                # Continue to app
-                if self.callback:
-                    dpg.delete_item("enhanced_file_selector")
-                    self.callback("generated_embeddings.npy", "generated_metadata.csv", "processed_text")
-                
-            except Exception as e:
-                if dpg.does_item_exist("processing_status"):
-                    dpg.set_value("processing_status", f"Error: {str(e)}")
-                if dpg.does_item_exist("progress_bar"):
-                    dpg.configure_item("progress_bar", show=False)
-        
-        threading.Thread(target=process, daemon=True).start()
+                        dpg.set_value("processing_status", f"Error in batch {i//batch_size + 1}: {str(e)}")
+                    return
+            
+            # Combine all embeddings
+            if dpg.does_item_exist("processing_status"):
+                dpg.set_value("processing_status", "Combining embeddings...")
+            if dpg.does_item_exist("progress_bar"):
+                dpg.set_value("progress_bar", 0.8)
+            
+            embeddings = np.vstack(all_embeddings)
+            
+            # Save files with only selected columns
+            if dpg.does_item_exist("processing_status"):
+                dpg.set_value("processing_status", "Saving files...")
+            if dpg.does_item_exist("progress_bar"):
+                dpg.set_value("progress_bar", 0.9)
+            
+            np.save("generated_embeddings.npy", embeddings)
+            
+            # Create metadata with only selected columns plus processed text
+            metadata_df = df[self.selected_columns].copy()
+            metadata_df['processed_text'] = texts
+            metadata_df.to_csv("generated_metadata.csv", index=False)
+            
+            if dpg.does_item_exist("progress_bar"):
+                dpg.set_value("progress_bar", 1.0)
+            if dpg.does_item_exist("processing_status"):
+                dpg.set_value("processing_status", f"Complete! Generated {len(embeddings)} embeddings with {len(metadata_df.columns)} metadata columns.")
+            
+            # Continue to app
+            if self.callback:
+                dpg.delete_item("enhanced_file_selector")
+                self.callback("generated_embeddings.npy", "generated_metadata.csv", "processed_text")
+            
+        except Exception as e:
+            if dpg.does_item_exist("processing_status"):
+                dpg.set_value("processing_status", f"Error: {str(e)}")
+            if dpg.does_item_exist("progress_bar"):
+                dpg.configure_item("progress_bar", show=False)
+    
+    
     
     # File selection methods
     def select_embeddings_file(self):
         if dpg.does_item_exist("embeddings_dialog"):
-            dpg.hide_item("embeddings_dialog")
+            dpg.delete_item("embeddings_dialog")
         
         with dpg.file_dialog(
             directory_selector=False,
             show=False,
             callback=self.embeddings_callback,
+            width=500,
+            height=350,
             tag="embeddings_dialog"
         ):
             dpg.add_file_extension(".npy")
@@ -723,12 +708,14 @@ class EnhancedFileSelector:
     
     def select_metadata_file(self):
         if dpg.does_item_exist("metadata_dialog"):
-            dpg.hide_item("metadata_dialog")
+            dpg.delete_item("metadata_dialog")
         
         with dpg.file_dialog(
             directory_selector=False,
             show=False,
             callback=self.metadata_callback,
+            width=500,
+            height=350,
             tag="metadata_dialog"
         ):
             dpg.add_file_extension(".csv")
@@ -798,8 +785,8 @@ class EnhancedFileSelector:
         metadata_files = [f for f in os.listdir('.') if f.endswith(('.csv', '.json'))]
         
         if embeddings_files and metadata_files:
-            self.embeddings_file = embeddings_files[0]
-            self.metadata_file = metadata_files[0]
+            self.embeddings_file = embeddings_files[-1]
+            self.metadata_file = metadata_files[-1]
             
             if dpg.does_item_exist("embeddings_path"):
                 dpg.set_value("embeddings_path", self.embeddings_file)

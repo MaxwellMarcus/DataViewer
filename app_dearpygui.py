@@ -15,6 +15,7 @@ from tab_manager import TabManager
 from enhanced_file_selector import EnhancedFileSelector
 import umap
 from scatter_tabs import *
+from font_config import setup_fonts, apply_fonts
 
 
 class VisualizerDPG:
@@ -37,31 +38,37 @@ class VisualizerDPG:
         self.run_application()
 
     def run_application(self):
-        """Run the complete application flow"""
-        # Step 1: Show file selector
-        if not self.show_file_selector():
-            return  # User cancelled or error occurred
-            
-        # Step 2: Start main application with selected data
-        self.start_main_application()
-
-    def show_file_selector(self):
-        """Show enhanced file selector and return True if files were selected"""
+        """Run the complete application flow with a single context"""
+        # Create single context for entire application
         dpg.create_context()
         
+        # Setup Arial font
+        setup_fonts(font_size=14)
+        
+        # Create viewport
+        dpg.create_viewport(title="Data Visualization Tool", width=1200, height=800)
+        dpg.setup_dearpygui()
+        
+        # Apply Arial font
+        apply_fonts()
+        
+        # Set up viewport resize callback
+        dpg.set_viewport_resize_callback(self.viewport_resize_callback)
+        
+        # Start with file selector
+        self.show_file_selector()
+        
+        dpg.show_viewport()
+        dpg.start_dearpygui()
+        dpg.destroy_context()
+
+    def show_file_selector(self):
+        """Show enhanced file selector"""
         file_selector = EnhancedFileSelector(callback=self.on_files_selected)
         file_selector.show_file_selector()
         
-        # Create viewport and start DearPyGui with just file selector
-        dpg.create_viewport(title="Data Visualization Setup", width=1000, height=800)
-        dpg.setup_dearpygui()
-        dpg.show_viewport()
+        # Set the file selector as primary window
         dpg.set_primary_window("enhanced_file_selector", True)
-        dpg.start_dearpygui()
-        dpg.destroy_context()
-        
-        # Return True if files were selected
-        return self.selected_embeddings is not None
         
     def on_files_selected(self, embeddings, metadata, primary_column):
         """Handle when files are selected and validated"""
@@ -72,18 +79,111 @@ class VisualizerDPG:
         self.selected_metadata = metadata
         self.selected_primary_column = primary_column
         
-        # Close the file selector
-        dpg.stop_dearpygui()
+        # Hide file selector and show loading screen
+        if dpg.does_item_exist("enhanced_file_selector"):
+            dpg.hide_item("enhanced_file_selector")
         
-    def start_main_application(self):
-        """Start the main application with selected data"""
-        print("Loading selected data...")
+        self.show_loading_screen()
+        
+        # Start data processing in background
+        self.process_data_and_start_main_app()
+        self.setup_main_ui()
+        #processing_thread = threading.Thread(target=self.process_data_and_start_main_app)
+        #processing_thread.daemon = True
+        #processing_thread.start()
+        
+    def show_loading_screen(self):
+        """Show loading screen while data is being processed"""
+        # Create themes for the loading screen
+        self.create_loading_themes()
+        
+        with dpg.window(label="", tag="loading_window", 
+                       no_resize=True, no_collapse=True, modal=True, no_close=True, no_title_bar=True):
+            
+            # Apply window theme
+            dpg.bind_item_theme("loading_window", "loading_window_theme")
+            
+            # Header section with decorative elements
+            with dpg.group(horizontal=False):
+                dpg.add_spacer(height=35)
+
                 
-        # Create new context for main application
-        dpg.create_context()
+                # Progress section with enhanced styling
+                with dpg.group():
+                    # Add vertical spacer to center content
+                    dpg.add_spacer(height=dpg.get_viewport_height() // 2 - 50)  # Adjust height to center vertically
+                    
+                    # Progress bar container with border effect
+                    with dpg.group(horizontal=True):
+                        dpg.add_spacer(width=dpg.get_viewport_width() // 2 - 225)  # Center the progress bar
+                        dpg.add_progress_bar(tag="loading_progress", width=450, height=12, default_value=0.0)
+                        dpg.bind_item_theme("loading_progress", "loading_progress_theme")
+                    
+                    dpg.add_spacer(height=18)
+                    
+                    # Status section with enhanced layout
+                    with dpg.group(horizontal=True):
+                        dpg.add_spacer(width=dpg.get_viewport_width() // 2 - 100)  # Center the status text
+                        dpg.add_text("Initializing...", tag="loading_status")
+                        dpg.bind_item_theme("loading_status", "loading_status_theme")
+
+                        
+        # Set loading window as primary
+        dpg.set_primary_window("loading_window", True)
         
-        # Load the actual data from file paths
+    
+    def create_loading_themes(self):
+        """Create themes for the loading screen"""
+        # Window theme with gradient-like background and glowing border
+        with dpg.theme(tag="loading_window_theme"):
+            with dpg.theme_component(dpg.mvWindowAppItem):
+                dpg.add_theme_color(dpg.mvThemeCol_WindowBg, [20, 25, 35, 255])  # Darker base
+                dpg.add_theme_color(dpg.mvThemeCol_Border, [100, 150, 255, 180])  # Brighter border
+                dpg.add_theme_style(dpg.mvStyleVar_WindowBorderSize, 3)  # Thicker border
+                dpg.add_theme_style(dpg.mvStyleVar_WindowRounding, 12)  # More rounded
+                dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 25, 25)  # More padding
+        
+        # Title theme with glow effect
+        with dpg.theme(tag="loading_title_theme"):
+            with dpg.theme_component(dpg.mvText):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, [100, 150, 255, 255])  # Brighter blue
+        
+        # Subtitle theme with softer text
+        with dpg.theme(tag="loading_subtitle_theme"):
+            with dpg.theme_component(dpg.mvText):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, [180, 200, 230, 255])  # Light blue-gray
+        
+        # Progress bar theme with gradient-like appearance
+        with dpg.theme(tag="loading_progress_theme"):
+            with dpg.theme_component(dpg.mvProgressBar):
+                dpg.add_theme_color(dpg.mvThemeCol_PlotHistogram, [80, 140, 255, 255])  # Vibrant blue
+                dpg.add_theme_color(dpg.mvThemeCol_FrameBg, [40, 45, 55, 255])  # Darker background
+                dpg.add_theme_style(dpg.mvStyleVar_FrameRounding, 6)  # More rounded
+                dpg.add_theme_style(dpg.mvStyleVar_FrameBorderSize, 1)  # Subtle border
+        
+        # Status text theme with better contrast
+        with dpg.theme(tag="loading_status_theme"):
+            with dpg.theme_component(dpg.mvText):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, [240, 245, 250, 255])  # Almost white
+        
+        # Info text theme with subtle styling
+        with dpg.theme(tag="loading_info_theme"):
+            with dpg.theme_component(dpg.mvText):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, [140, 160, 180, 255])  # Muted blue-gray
+    
+    def update_loading_progress(self, progress, status_text):
+        """Update loading progress and status"""
+        if dpg.does_item_exist("loading_progress"):
+            dpg.set_value("loading_progress", progress)
+        if dpg.does_item_exist("loading_status"):
+            dpg.set_value("loading_status", status_text)
+    
+    def process_data_and_start_main_app(self):
+        """Process data and start main application (runs in background thread)"""
         try:
+            # Update progress: Loading files
+            self.update_loading_progress(0.1, "Loading embeddings file...")
+            
             # Load embeddings data
             if self.selected_embeddings.endswith('.npy'):
                 embeddings_data = np.load(self.selected_embeddings)
@@ -91,6 +191,9 @@ class VisualizerDPG:
             else:
                 raise ValueError(f"Unsupported embeddings file format: {self.selected_embeddings}")
             
+            # Update progress: Loading metadata
+            self.update_loading_progress(0.3, "Loading metadata file...")
+
             # Load metadata
             if self.selected_metadata.endswith('.csv'):
                 metadata_data = pd.read_csv(self.selected_metadata)
@@ -110,40 +213,88 @@ class VisualizerDPG:
             if len(embeddings_data) != len(metadata_data):
                 raise ValueError(f"Data mismatch: {len(embeddings_data)} embeddings vs {len(metadata_data)} metadata rows")
             
+            # Update progress: Initializing DataManager
+            self.update_loading_progress(0.5, "Initializing data manager...")
+            
+            # Initialize DataManager with actual loaded data
+            self.data_manager = DataManager(
+                embeddings_data, 
+                metadata_data, 
+                primary_metadata_column=self.selected_primary_column
+            )
+            
+            # Update progress: Preparing visualizations
+            self.update_loading_progress(0.8, "Preparing visualizations...")
+            
+            # Initialize TabManager
+            self.tab_manager = TabManager(self.data_manager)
+            
+            # Initialize tabs through TabManager
+            self.tab_manager.initialize_tabs()
+            
+            # Update progress: Finalizing
+            self.update_loading_progress(0.95, "Finalizing setup...")
+            
         except Exception as e:
             print(f"Error loading data: {e}")
-            # Create error dialog
-            with dpg.window(label="Error Loading Data", modal=True, width=400, height=200):
-                dpg.add_text(f"Failed to load data files:")
-                dpg.add_text(f"Error: {str(e)}")
-                dpg.add_separator()
-                dpg.add_button(label="OK", callback=lambda: dpg.stop_dearpygui())
-            dpg.setup_dearpygui()
-            dpg.show_viewport()
-            dpg.start_dearpygui()
-            dpg.destroy_context()
-            return
+            # Show error dialog on main thread
+            def show_error():
+                self.show_error_dialog(str(e))
+            dpg.set_frame_callback(1, show_error)
+    
+    def show_error_dialog(self, error_message):
+        """Show error dialog"""
+        # Hide loading window
+        if dpg.does_item_exist("loading_window"):
+            dpg.hide_item("loading_window")
+            
+        with dpg.window(label="Error Loading Data", modal=True, width=400, height=200, tag="error_dialog"):
+            dpg.add_text("Failed to load data files:")
+            dpg.add_text(f"Error: {error_message}", wrap=350)
+            dpg.add_separator()
+            with dpg.group(horizontal=True):
+                dpg.add_spacer(width=250)
+                dpg.add_button(label="OK", callback=self.close_error_and_restart)
         
-        # Initialize DataManager with actual loaded data
-        self.data_manager = DataManager(
-            embeddings_data, 
-            metadata_data, 
-            primary_metadata_column=self.selected_primary_column
-        )
+        # Center the error dialog
+        viewport_width = dpg.get_viewport_width()
+        viewport_height = dpg.get_viewport_height()
+        window_width = 400
+        window_height = 200
+        pos_x = (viewport_width - window_width) // 2
+        pos_y = (viewport_height - window_height) // 2
+        dpg.set_item_pos("error_dialog", [pos_x, pos_y])
         
-        # Initialize TabManager
-        self.tab_manager = TabManager(self.data_manager)
+        dpg.set_primary_window("error_dialog", True)
+    
+    def close_error_and_restart(self):
+        """Close error dialog and restart file selection"""
+        if dpg.does_item_exist("error_dialog"):
+            dpg.delete_item("error_dialog")
+        if dpg.does_item_exist("loading_window"):
+            dpg.delete_item("loading_window")
         
-        # Initialize tabs through TabManager
-        self.tab_manager.initialize_tabs()
+        # Reset selections
+        self.selected_embeddings = None
+        self.selected_metadata = None
+        self.selected_primary_column = None
+        
+        # Show file selector again
+        if dpg.does_item_exist("enhanced_file_selector"):
+            dpg.show_item("enhanced_file_selector")
+            dpg.set_primary_window("enhanced_file_selector", True)
+        else:
+            self.show_file_selector()
 
-        # Setup main UI
-        self.setup_ui()
+    def setup_main_ui(self):
+        """Setup the main application UI after data is loaded"""
+        # Hide loading window
+        if dpg.does_item_exist("loading_window"):
+            dpg.delete_item("loading_window")
         
-    def setup_ui(self):
-        """Setup the main application UI"""
-        with dpg.window(label="Data Visualization Tool", width=1200, height=800, pos=(0, 0), 
-                       tag="main_window", no_resize=True, no_title_bar=True, no_collapse=True, no_scrollbar=True):
+        # Create main window
+        with dpg.window(label="Data Visualization Tool", pos=(0, 0), 
+                       tag="main_window", no_title_bar=True, no_collapse=True, no_scrollbar=True, no_move=True):
             # Create main window for plots
             with dpg.child_window(label="Visualization", tag="visualization_window", height=-250):
                 self.tab_manager.setup_main_tab_ui()
@@ -169,10 +320,12 @@ class VisualizerDPG:
                              # Dimensionality Reduction Tab Creation
                              with dpg.tab(label="Dimensionality Reduction"):
                                  self.tab_manager.setup_dimred_creation_controls()
-
-        dpg.create_viewport(title="Data Visualization Tool", width=1200, height=800)
-        dpg.setup_dearpygui()
-        dpg.show_viewport()
+        
+        # Set initial window size to fill viewport
+        self.resize_main_window()
+        
+        # Set main window as primary
+        dpg.set_primary_window("main_window", True)
         
         print("Application loaded successfully!")
         print("Lasso functionality available:")
@@ -182,8 +335,16 @@ class VisualizerDPG:
         print("4. Use 'Create Cluster from Selection' to create clusters from selected points")
         print("\nPress Ctrl+C or close the window to exit...")
         
-        dpg.start_dearpygui()
-        dpg.destroy_context()
+    def viewport_resize_callback(self):
+        """Handle viewport resize events"""
+        self.resize_main_window()
+    
+    def resize_main_window(self):
+        """Resize the main window to fill the viewport"""
+        if dpg.does_item_exist("main_window"):
+            viewport_width = dpg.get_viewport_width()
+            viewport_height = dpg.get_viewport_height()
+            dpg.configure_item("main_window", width=viewport_width, height=viewport_height)
 
     def get_cluster_color(self, cluster_id):
         """Get color for a specific cluster using DataManager"""
